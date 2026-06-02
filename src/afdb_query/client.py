@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import httpx
 
+from .batch import search_many as _search_many
 from .errors import InvalidSequenceError
 from .models import Structure, confidence_url
 from .sequences import filter_reason
@@ -80,3 +81,22 @@ class AlphaFold:
         if data is None:
             return []
         return [Structure(item["summary"], self) for item in data.get("structures", [])]
+
+    def search_many(
+        self,
+        inputs,
+        out_dir,
+        *,
+        concurrency: int = 6,
+        rows: int = 10,
+        plddt_first_n: int | None = None,
+    ) -> dict:
+        """Concurrent, resumable batch lookup. See ``afdb_query.batch.search_many``."""
+        return _search_many(
+            self,
+            inputs,
+            out_dir,
+            concurrency=concurrency,
+            rows=rows,
+            plddt_first_n=plddt_first_n,
+        )
