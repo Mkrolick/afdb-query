@@ -95,6 +95,7 @@ class AlphaFold:
         concurrency: int = 6,
         rows: int = 10,
         plddt_first_n: int | None = None,
+        full_length: bool = False,
     ) -> dict:
         """Concurrent, resumable batch lookup. See ``afdb_query.batch.search_many``."""
         return _search_many(
@@ -104,4 +105,5 @@ class AlphaFold:
             concurrency=concurrency,
             rows=rows,
             plddt_first_n=plddt_first_n,
+            full_length=full_length,
         )
