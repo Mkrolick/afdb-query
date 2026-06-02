@@ -14,7 +14,7 @@ pip install afdb-query
 from afdb_query import AlphaFold
 
 with AlphaFold() as af:
-    hits = af.search(sequence)        # Tier 1: list[Structure], best matches first
+    hits = af.search(sequence)        # Tier 1: list[Structure], in AFDB's returned order
     s = hits[0]
 
     s.global_plddt        # mean pLDDT for the model (cheap, from the summary)
@@ -29,6 +29,11 @@ with AlphaFold() as af:
 `search` raises `InvalidSequenceError` for sequences that cannot be queried
 (internal stop `*`, shorter than 20 residues, or non-standard amino acids), and
 returns `[]` when AFDB has no entry for a valid sequence.
+
+Results come back in AFDB's returned order (ranked by sequence identity). Note that
+`hits[0]` is **not** guaranteed to be the canonical `AF-<accession>-F1` model — for
+some sequences a multi-chain or AB-INITIO model ranks first — so pick the hit whose
+`model_identifier` you want if you need a specific entry.
 
 ## Batch lookups
 

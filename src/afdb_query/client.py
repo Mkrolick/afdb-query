@@ -69,7 +69,12 @@ class AlphaFold:
 
     # -- public API --------------------------------------------------------
     def search(self, sequence: str, rows: int = 10) -> list[Structure]:
-        """Tier 1: find AFDB structures matching ``sequence``, best matches first.
+        """Tier 1: find AFDB structures matching ``sequence``, in AFDB's returned order.
+
+        Results are ranked by sequence identity, but ``hits[0]`` is not guaranteed to
+        be the canonical ``AF-<accession>-F1`` model — for some sequences a multi-chain
+        or AB-INITIO model ranks first. Select by ``model_identifier`` if you need a
+        specific entry.
 
         Raises :class:`InvalidSequenceError` if the sequence is not queryable.
         Returns ``[]`` when AFDB has no entry for it.
