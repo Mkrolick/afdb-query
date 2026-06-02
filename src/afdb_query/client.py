@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import httpx
 
-from .models import confidence_url
+from .errors import InvalidSequenceError
+from .models import Structure, confidence_url
+from .sequences import filter_reason
 
 DEFAULT_BASE_URL = "https://alphafold.ebi.ac.uk"
 SUMMARY_PATH = "/api/sequence/summary"
@@ -63,3 +65,18 @@ class AlphaFold:
         resp = self._get(confidence_url(model_url))
         resp.raise_for_status()
         return resp.json()
+
+    # -- public API --------------------------------------------------------
+    def search(self, sequence: str, rows: int = 10) -> list[Structure]:
+        """Tier 1: find AFDB structures matching ``sequence``, best matches first.
+
+        Raises :class:`InvalidSequenceError` if the sequence is not queryable.
+        Returns ``[]`` when AFDB has no entry for it.
+        """
+        reason = filter_reason(sequence)
+        if reason is not None:
+            raise InvalidSequenceError(reason)
+        data = self._fetch_summary(sequence, rows)
+        if data is None:
+            return []
+        return [Structure(item["summary"], self) for item in data.get("structures", [])]

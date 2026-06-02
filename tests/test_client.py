@@ -3,6 +3,7 @@ import pytest
 import respx
 
 from afdb_query.client import AlphaFold
+from afdb_query.errors import InvalidSequenceError
 
 SUMMARY_URL = "https://alphafold.ebi.ac.uk/api/sequence/summary"
 VALID = "ACDEFGHIKLMNPQRSTVWY"
@@ -52,3 +53,39 @@ def test_fetch_confidence():
     with AlphaFold() as af:
         data = af._fetch_confidence(model_url)
     assert data["confidenceScore"] == [10.0, 20.0]
+
+
+STRUCT_SUMMARY = {
+    "model_identifier": "AF-X",
+    "model_url": "https://alphafold.ebi.ac.uk/files/AF-X-model_v1.cif",
+    "confidence_avg_local_score": 91.65,
+    "entities": [{"identifier": "P12345", "identifier_category": "UNIPROT"}],
+}
+
+
+@respx.mock
+def test_search_success_returns_structures():
+    respx.get(SUMMARY_URL).mock(
+        return_value=httpx.Response(
+            200, json={"entry": {}, "structures": [{"summary": STRUCT_SUMMARY}]}
+        )
+    )
+    with AlphaFold() as af:
+        hits = af.search(VALID)
+    assert len(hits) == 1
+    assert hits[0].global_plddt == 91.65
+    assert hits[0].uniprot_accession == "P12345"
+
+
+@respx.mock
+def test_search_404_returns_empty_list():
+    respx.get(SUMMARY_URL).mock(return_value=httpx.Response(404))
+    with AlphaFold() as af:
+        assert af.search(VALID) == []
+
+
+def test_search_invalid_sequence_raises():
+    with AlphaFold() as af:
+        with pytest.raises(InvalidSequenceError) as excinfo:
+            af.search("ACD*EFGHIKLMNPQRSTVWY")
+    assert excinfo.value.reason == "internal_stop"
