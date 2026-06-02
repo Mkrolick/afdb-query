@@ -1,0 +1,65 @@
+"""The AlphaFold client: HTTP session and AFDB endpoint access."""
+
+from __future__ import annotations
+
+import httpx
+
+from .models import confidence_url
+
+DEFAULT_BASE_URL = "https://alphafold.ebi.ac.uk"
+SUMMARY_PATH = "/api/sequence/summary"
+
+
+class AlphaFold:
+    """Client for sequence-based access to the AlphaFold Protein Structure Database.
+
+    Wraps a shared, thread-safe ``httpx.Client``. Use as a context manager, or
+    call :meth:`close` when done.
+    """
+
+    def __init__(
+        self,
+        *,
+        timeout: float = 30.0,
+        base_url: str = DEFAULT_BASE_URL,
+        max_retries: int = 2,
+    ) -> None:
+        transport = httpx.HTTPTransport(retries=max_retries)
+        self._client = httpx.Client(base_url=base_url, timeout=timeout, transport=transport)
+
+    # -- lifecycle ---------------------------------------------------------
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> "AlphaFold":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    # -- low-level fetch ---------------------------------------------------
+    def _get(self, url: str, params: dict | None = None) -> httpx.Response:
+        return self._client.get(url, params=params, headers={"Accept": "application/json"})
+
+    def _fetch_summary(self, sequence: str, rows: int = 10) -> dict | None:
+        """Tier 1: query the sequence-summary endpoint.
+
+        Returns the parsed ``{"entry": ..., "structures": [...]}`` document, or
+        ``None`` when AFDB has no entry (HTTP 404 — a clean "not found"). Raises
+        on any other HTTP error.
+        """
+        if rows < 2:
+            raise ValueError("rows must be > 1 (AFDB rejects rows <= 1)")
+        resp = self._get(
+            SUMMARY_PATH, params={"id": sequence, "type": "sequence", "rows": rows}
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()
+
+    def _fetch_confidence(self, model_url: str) -> dict:
+        """Tier 2: fetch the per-residue confidence JSON for a model URL."""
+        resp = self._get(confidence_url(model_url))
+        resp.raise_for_status()
+        return resp.json()
