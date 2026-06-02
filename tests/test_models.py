@@ -58,3 +58,60 @@ def test_from_dict():
     assert p.scores == [5.0, 6.0]
     assert p.residue_numbers == [1, 2]
     assert p.raw["confidenceCategory"] == ["D", "D"]
+
+
+import httpx
+import respx
+
+from afdb_query.client import AlphaFold
+from afdb_query.models import Structure
+
+SUMMARY = {
+    "model_identifier": "AF-X",
+    "model_url": "https://alphafold.ebi.ac.uk/files/AF-X-model_v1.cif",
+    "confidence_avg_local_score": 91.65,
+    "sequence_identity": 1.0,
+    "coverage": 1.0,
+    "entities": [
+        {
+            "identifier": "P12345",
+            "identifier_category": "UNIPROT",
+            "description": "Aspartate aminotransferase, mitochondrial",
+        }
+    ],
+}
+
+
+def test_structure_accessors():
+    s = Structure(SUMMARY, None)
+    assert s.model_identifier == "AF-X"
+    assert s.model_url.endswith("AF-X-model_v1.cif")
+    assert s.global_plddt == 91.65
+    assert s.sequence_identity == 1.0
+    assert s.coverage == 1.0
+    assert s.uniprot_accession == "P12345"
+    assert s.description == "Aspartate aminotransferase, mitochondrial"
+    assert s.raw is SUMMARY
+
+
+def test_structure_uniprot_missing_returns_none():
+    s = Structure({"entities": [{"identifier": "x", "identifier_category": "PDB"}]}, None)
+    assert s.uniprot_accession is None
+
+
+@respx.mock
+def test_structure_plddt_lazy_and_cached():
+    conf_url = "https://alphafold.ebi.ac.uk/files/AF-X-confidence_v1.json"
+    route = respx.get(conf_url).mock(
+        return_value=httpx.Response(
+            200, json={"residueNumber": [1, 2, 3], "confidenceScore": [10.0, 20.0, 30.0]}
+        )
+    )
+    with AlphaFold() as af:
+        s = Structure(SUMMARY, af)
+        p1 = s.plddt()
+        p2 = s.plddt()
+    assert p1.scores == [10.0, 20.0, 30.0]
+    assert p1.first(2) == [10.0, 20.0]
+    assert p1 is p2  # cached on the instance
+    assert route.call_count == 1  # fetched once
