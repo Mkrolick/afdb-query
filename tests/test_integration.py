@@ -69,12 +69,12 @@ def test_live_select_avoids_multichain_trap():
     # group would mix different residue counts
     with AlphaFold() as af:
         for s in group:
-            scores = af._fetch_confidence(s["model_url"])["confidenceScore"]
+            scores = af.fetch_confidence(s["model_url"])["confidenceScore"]
             assert len(scores) == len(GOT2), s["model_identifier"]
 
 
 @pytest.mark.integration
-def test_live_selection_ignores_plddt_ranking():
+def test_live_selection_ignores_pldd_ranking():
     """Selection must not depend on the confidence scores AFDB reports."""
     resp = httpx.get(
         SUMMARY_URL,
@@ -84,8 +84,9 @@ def test_live_selection_ignores_plddt_ranking():
     )
     structures = resp.json()["structures"]
     baseline = [s["model_identifier"] for s in select_group(structures)]
+    # Perturbing every score must not move the group.
     bumped = [
-        {"summary": {**x["summary"], "confidence_avg_local_score": 99.99}} for x in structures
+        {"summary": {**s["summary"], "confidence_avg_local_score": 99.99}} for s in structures
     ]
     assert [s["model_identifier"] for s in select_group(bumped)] == baseline
 
@@ -188,15 +189,15 @@ def test_raw_confidence_json_matches_cif_bfactor():
     )
     model_url = summary["model_url"]
 
-    json_scores = httpx.get(
-        confidence_url(model_url), timeout=60, follow_redirects=True
-    ).json()["confidenceScore"]
+    json_scores = httpx.get(confidence_url(model_url), timeout=60, follow_redirects=True).json()[
+        "confidenceScore"
+    ]
 
     cif_text = httpx.get(model_url, timeout=60, follow_redirects=True).text
     cif_bfactors = _cif_ca_bfactors(cif_text)
 
     assert len(json_scores) == len(cif_bfactors) > 0
-    assert all(abs(a - b) <= 0.01 for a, b in zip(json_scores, cif_bfactors))
+    assert all(abs(a - b) <= 0.01 for a, b in zip(json_scores, cif_bfactors, strict=True))
 
 
 def _cif_ca_bfactors(text):

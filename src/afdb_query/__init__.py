@@ -1,7 +1,7 @@
 """afdb-query: sequence-based programmatic access to the AlphaFold DB."""
 
 from .client import AlphaFold
-from .errors import AFDBError, InvalidSequenceError
+from .errors import AFDBError, AFDBHTTPError, InvalidSequenceError
 from .models import Plddt, Structure, confidence_url
 from .selection import (
     filter_by_length,
@@ -24,5 +24,6 @@ __all__ = [
     "is_monomer",
     "is_canonical_model",
     "AFDBError",
+    "AFDBHTTPError",
     "InvalidSequenceError",
 ]

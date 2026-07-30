@@ -190,9 +190,7 @@ def test_filter_by_length_keeps_exact_matches():
 def test_filter_by_length_drops_longer_models():
     """An ortholog with extra terminal residues passes every visible tier but is not the query."""
     good, long_ = _s("AF-P00001-F1"), _s("AF-P00002-F1")
-    kept, dropped = filter_by_length(
-        [good, long_], {"AF-P00001-F1": 430, "AF-P00002-F1": 437}, 430
-    )
+    kept, dropped = filter_by_length([good, long_], {"AF-P00001-F1": 430, "AF-P00002-F1": 437}, 430)
     assert [s["model_identifier"] for s in kept] == ["AF-P00001-F1"]
     assert [s["model_identifier"] for s in dropped] == ["AF-P00002-F1"]
 
@@ -218,8 +216,6 @@ def test_filter_by_length_then_mean_excludes_the_outlier():
     """End to end: the wrong-length member must not reach the average."""
     good = _s("AF-P00001-F1", gp=70.0)
     long_ = _s("AF-P00002-F1", gp=95.0)  # higher score, wrong protein extent
-    kept, dropped = filter_by_length(
-        [good, long_], {"AF-P00001-F1": 430, "AF-P00002-F1": 860}, 430
-    )
+    kept, dropped = filter_by_length([good, long_], {"AF-P00001-F1": 430, "AF-P00002-F1": 860}, 430)
     assert mean_global_plddt(kept) == 70.0
     assert mean_global_plddt(dropped) == 95.0  # visible, not silently absorbed

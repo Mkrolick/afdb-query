@@ -29,7 +29,9 @@ with AlphaFold() as af:
 
 `search` raises `InvalidSequenceError` for sequences that cannot be queried
 (internal stop `*`, shorter than 20 residues, or non-standard amino acids), and
-returns `[]` when AFDB has no entry for a valid sequence.
+returns `[]` when AFDB has no entry for a valid sequence. Every HTTP or transport
+failure is raised as `AFDBHTTPError`, so catching `AFDBError` is enough — you never
+need to import `httpx`.
 
 ## Choosing a structure
 
@@ -48,8 +50,8 @@ complexes, then canonical `-F1` over numeric ids — and returns **everything st
 from afdb_query import AlphaFold, select_group, mean_global_plddt, is_monomer
 
 with AlphaFold() as af:
-    hits = af.search(sequence)
-    group = select_group([{"summary": h.raw} for h in hits])   # list, possibly empty
+    doc = af.fetch_summary(sequence)
+    group = select_group(doc["structures"])    # list of summaries, possibly empty
 
     if not all(is_monomer(s) for s in group):
         ...                                   # your call: skip, or use it knowingly
@@ -118,6 +120,17 @@ report = af.search_many(
 )
 ```
 
+```python
+{
+  "total":    2,
+  "skipped":  0,                                                   # already cached
+  "filtered": {"internal_stop": 0, "too_short": 0, "nonstandard_aa": 0, "total": 0},
+  "queried":  {"hits": 2, "misses": 0, "errors": 0, "total": 2},
+}
+```
+
+`total == skipped + filtered["total"] + queried["total"]`; no count appears twice.
+
 - You supply a generic `id` per sequence; it keys the cache file and maps back to
   your own records.
 - `out_dir/summaries/{id}.json` stores each hit (a 404 miss stores
@@ -134,3 +147,17 @@ average across what it returns.
 
 - UniProt-accession lookup (sequence-only for now)
 - PAE (Predicted Aligned Error)
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+ruff check . && ruff format --check .
+pytest                    # unit suite; 100% branch coverage is enforced
+pytest -m integration     # live AFDB tests (network required)
+```
+
+The integration suite includes a ground-truth check that the per-residue pLDDT in
+AFDB's confidence JSON matches the B-factor column of the deposited mmCIF — two
+independently generated files — so upstream API drift surfaces here rather than in
+your results.
