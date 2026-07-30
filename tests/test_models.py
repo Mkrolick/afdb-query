@@ -1,5 +1,3 @@
-import pytest
-
 from afdb_query.errors import AFDBError, InvalidSequenceError
 from afdb_query.models import confidence_url
 
@@ -33,22 +31,6 @@ def test_confidence_url_bcif():
 
 
 from afdb_query.models import Plddt
-
-
-def _plddt(scores):
-    return Plddt(scores=scores, residue_numbers=list(range(1, len(scores) + 1)), raw={})
-
-
-def test_first_normal():
-    assert _plddt([1.0, 2.0, 3.0, 4.0]).first(2) == [1.0, 2.0]
-
-
-def test_first_more_than_len_returns_all():
-    assert _plddt([1.0, 2.0]).first(10) == [1.0, 2.0]
-
-
-def test_first_zero():
-    assert _plddt([1.0, 2.0]).first(0) == []
 
 
 def test_from_dict():
@@ -94,6 +76,27 @@ def test_structure_accessors():
     assert s.raw is SUMMARY
 
 
+def test_structure_oligomeric_state_and_monomer():
+    assert Structure(SUMMARY, None).oligomeric_state is None  # SUMMARY leaves it unset
+    assert Structure(SUMMARY, None).is_monomer
+    dimer = Structure(
+        {"oligomeric_state": "HOMODIMER", "entities": [{"chain_ids": ["A", "B"]}]}, None
+    )
+    assert dimer.oligomeric_state == "HOMODIMER"
+    assert not dimer.is_monomer
+
+
+def test_structure_no_entities_returns_none():
+    s = Structure({}, None)
+    assert s.uniprot_accession is None
+    assert s.description is None
+
+
+def test_structure_description_missing_returns_none():
+    s = Structure({"entities": [{"identifier": "x", "identifier_category": "PDB"}]}, None)
+    assert s.description is None
+
+
 def test_structure_uniprot_missing_returns_none():
     s = Structure({"entities": [{"identifier": "x", "identifier_category": "PDB"}]}, None)
     assert s.uniprot_accession is None
@@ -112,6 +115,6 @@ def test_structure_plddt_lazy_and_cached():
         p1 = s.plddt()
         p2 = s.plddt()
     assert p1.scores == [10.0, 20.0, 30.0]
-    assert p1.first(2) == [10.0, 20.0]
+    assert p1.residue_numbers == [1, 2, 3]
     assert p1 is p2  # cached on the instance
     assert route.call_count == 1  # fetched once

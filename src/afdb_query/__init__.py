@@ -3,6 +3,13 @@
 from .client import AlphaFold
 from .errors import AFDBError, InvalidSequenceError
 from .models import Plddt, Structure, confidence_url
+from .selection import (
+    filter_by_length,
+    is_canonical_model,
+    is_monomer,
+    mean_global_plddt,
+    select_group,
+)
 from .sequences import filter_reason
 
 __all__ = [
@@ -11,6 +18,11 @@ __all__ = [
     "Plddt",
     "filter_reason",
     "confidence_url",
+    "select_group",
+    "mean_global_plddt",
+    "filter_by_length",
+    "is_monomer",
+    "is_canonical_model",
     "AFDBError",
     "InvalidSequenceError",
 ]

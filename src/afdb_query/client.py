@@ -73,8 +73,9 @@ class AlphaFold:
 
         Results are ranked by sequence identity, but ``hits[0]`` is not guaranteed to
         be the canonical ``AF-<accession>-F1`` model — for some sequences a multi-chain
-        or AB-INITIO model ranks first. Select by ``model_identifier`` if you need a
-        specific entry.
+        or AB-INITIO model ranks first, and several may be equally valid. Use
+        ``afdb_query.select_group`` to get every acceptable candidate rather than
+        letting one be picked for you.
 
         Raises :class:`InvalidSequenceError` if the sequence is not queryable.
         Returns ``[]`` when AFDB has no entry for it.
@@ -87,23 +88,6 @@ class AlphaFold:
             return []
         return [Structure(item["summary"], self) for item in data.get("structures", [])]
 
-    def search_many(
-        self,
-        inputs,
-        out_dir,
-        *,
-        concurrency: int = 6,
-        rows: int = 10,
-        plddt_first_n: int | None = None,
-        full_length: bool = False,
-    ) -> dict:
+    def search_many(self, inputs, out_dir, *, concurrency: int = 6, rows: int = 10) -> dict:
         """Concurrent, resumable batch lookup. See ``afdb_query.batch.search_many``."""
-        return _search_many(
-            self,
-            inputs,
-            out_dir,
-            concurrency=concurrency,
-            rows=rows,
-            plddt_first_n=plddt_first_n,
-            full_length=full_length,
-        )
+        return _search_many(self, inputs, out_dir, concurrency=concurrency, rows=rows)
