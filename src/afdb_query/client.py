@@ -44,12 +44,14 @@ class AlphaFold:
         self.close()
 
     # -- fetch -------------------------------------------------------------
-    # Public rather than underscore-private: `batch.search_many` drives the client
-    # through exactly these two calls, and a cross-module caller reaching into
-    # private methods is not a boundary -- it is the absence of one.
+    # `_get` stays private: it only attaches headers, and nothing outside this class
+    # has reason to reach for it.
     def _get(self, url: str, params: dict | None = None) -> httpx.Response:
         return self._client.get(url, params=params, headers={"Accept": "application/json"})
 
+    # The two methods below are public rather than underscore-private: `batch.search_many`
+    # drives the client through exactly these calls, and a cross-module caller reaching
+    # into private methods is not a boundary -- it is the absence of one.
     def fetch_summary(self, sequence: str, rows: int = 10) -> dict | None:
         """Tier 1: query the sequence-summary endpoint.
 
