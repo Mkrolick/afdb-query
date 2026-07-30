@@ -148,22 +148,34 @@ pass its members to `fetch_plddt_many` when you need per-residue data.
 `fetch_plddt_many` caches the **full** per-residue array for each structure you chose:
 
 ```python
-from afdb_query import AlphaFold, select_group, fetch_plddt_many, load_plddt
+from afdb_query import (
+    AlphaFold, select_group, fetch_plddt_many, load_plddt, mean_per_residue,
+)
 import json, pathlib
 
-# summaries were cached earlier by search_many
-records = []
-for f in (pathlib.Path("afdb_cache") / "summaries").glob("*.json"):
-    for s in select_group(json.loads(f.read_text()).get("structures") or []):
-        records.append({"id": f"{f.stem}::{s['model_identifier']}", "model_url": s["model_url"]})
+cache = pathlib.Path("afdb_cache")
+
+# summaries were cached earlier by search_many. One record per GROUP MEMBER: the id
+# keys the cache file, so members of the same group must not collide on it.
+records, members = [], {}
+for f in (cache / "summaries").glob("*.json"):
+    group = select_group(json.loads(f.read_text()).get("structures") or [])
+    members[f.stem] = []
+    for s in group:
+        rid = f"{f.stem}::{s['model_identifier']}"
+        members[f.stem].append(rid)
+        records.append({"id": rid, "model_url": s["model_url"]})
 
 with AlphaFold() as af:
-    fetch_plddt_many(af, records, "afdb_cache")
+    fetch_plddt_many(af, records, cache)
 
-p = load_plddt("afdb_cache", "rec1")   # Plddt, or None if never fetched
-p.scores                                # full list[float]
-p.mean()                                # one definition of "mean pLDDT"
-p.mean(start=42)                        # ...and of a region of it
+# Read one record's group back -- with the SAME composite ids that were written -- and
+# average it. mean_per_residue raises if the members disagree in length.
+plddts = [p for rid in members["rec1"] if (p := load_plddt(cache, rid))]
+consensus = mean_per_residue([p.scores for p in plddts])
+
+plddts[0].mean()             # one definition of "mean pLDDT"
+plddts[0].mean(start=42)     # ...and of a region of it
 ```
 
 Resumability keys on `afdb_cache/plddt/{id}.json`, **not** on the summary — so running
