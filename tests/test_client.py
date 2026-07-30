@@ -3,7 +3,7 @@ import pytest
 import respx
 
 from afdb_query.client import AlphaFold
-from afdb_query.errors import InvalidSequenceError
+from afdb_query.errors import AFDBError, AFDBHTTPError, InvalidSequenceError
 
 SUMMARY_URL = "https://alphafold.ebi.ac.uk/api/sequence/summary"
 VALID = "ACDEFGHIKLMNPQRSTVWY"
@@ -15,7 +15,7 @@ def test_fetch_summary_success():
         return_value=httpx.Response(200, json={"entry": {}, "structures": []})
     )
     with AlphaFold() as af:
-        data = af._fetch_summary(VALID)
+        data = af.fetch_summary(VALID)
     assert data == {"entry": {}, "structures": []}
 
 
@@ -23,22 +23,30 @@ def test_fetch_summary_success():
 def test_fetch_summary_404_returns_none():
     respx.get(SUMMARY_URL).mock(return_value=httpx.Response(404))
     with AlphaFold() as af:
-        assert af._fetch_summary(VALID) is None
+        assert af.fetch_summary(VALID) is None
 
 
 @respx.mock
-def test_fetch_summary_500_raises():
+def test_fetch_summary_500_raises_afdb_error():
+    """HTTP failures surface as AFDBHTTPError, so callers never import httpx."""
     respx.get(SUMMARY_URL).mock(return_value=httpx.Response(500))
-    with AlphaFold() as af:
-        with pytest.raises(httpx.HTTPStatusError):
-            af._fetch_summary(VALID)
+    with AlphaFold() as af, pytest.raises(AFDBHTTPError) as excinfo:
+        af.fetch_summary(VALID)
+    assert isinstance(excinfo.value, AFDBError)
+    assert isinstance(excinfo.value.__cause__, httpx.HTTPError)
+
+
+@respx.mock
+def test_fetch_summary_transport_error_is_wrapped():
+    respx.get(SUMMARY_URL).mock(side_effect=httpx.ConnectError("boom"))
+    with AlphaFold() as af, pytest.raises(AFDBHTTPError):
+        af.fetch_summary(VALID)
 
 
 def test_fetch_summary_rows_guard():
     # API rejects rows <= 1; we fail fast with a clear ValueError before requesting.
-    with AlphaFold() as af:
-        with pytest.raises(ValueError):
-            af._fetch_summary(VALID, rows=1)
+    with AlphaFold() as af, pytest.raises(ValueError):
+        af.fetch_summary(VALID, rows=1)
 
 
 @respx.mock
@@ -51,8 +59,17 @@ def test_fetch_confidence():
         )
     )
     with AlphaFold() as af:
-        data = af._fetch_confidence(model_url)
+        data = af.fetch_confidence(model_url)
     assert data["confidenceScore"] == [10.0, 20.0]
+
+
+@respx.mock
+def test_fetch_confidence_error_is_wrapped():
+    model_url = "https://alphafold.ebi.ac.uk/files/AF-X-model_v4.cif"
+    conf_url = "https://alphafold.ebi.ac.uk/files/AF-X-confidence_v4.json"
+    respx.get(conf_url).mock(return_value=httpx.Response(500))
+    with AlphaFold() as af, pytest.raises(AFDBHTTPError):
+        af.fetch_confidence(model_url)
 
 
 STRUCT_SUMMARY = {
@@ -85,7 +102,14 @@ def test_search_404_returns_empty_list():
 
 
 def test_search_invalid_sequence_raises():
-    with AlphaFold() as af:
-        with pytest.raises(InvalidSequenceError) as excinfo:
-            af.search("ACD*EFGHIKLMNPQRSTVWY")
+    with AlphaFold() as af, pytest.raises(InvalidSequenceError) as excinfo:
+        af.search("ACD*EFGHIKLMNPQRSTVWY")
     assert excinfo.value.reason == "internal_stop"
+
+
+@respx.mock
+def test_close_without_context_manager():
+    respx.get(SUMMARY_URL).mock(return_value=httpx.Response(404))
+    af = AlphaFold()
+    assert af.search(VALID) == []
+    af.close()

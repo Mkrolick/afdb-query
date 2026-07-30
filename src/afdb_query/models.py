@@ -35,7 +35,7 @@ class Plddt:
     raw: dict = field(repr=False)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Plddt":
+    def from_dict(cls, data: dict) -> Plddt:
         return cls(
             scores=data["confidenceScore"],
             residue_numbers=data["residueNumber"],
@@ -52,7 +52,7 @@ class Structure:
     """
 
     raw: dict
-    _client: "AlphaFold" = field(repr=False, compare=False)  # noqa: F821
+    _client: AlphaFold = field(repr=False, compare=False)  # noqa: F821
     _cache: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
@@ -108,6 +108,6 @@ class Structure:
     def plddt(self) -> Plddt:
         """Tier 2: per-residue pLDDT for this structure (fetched once, then cached)."""
         if "plddt" not in self._cache:
-            data = self._client._fetch_confidence(self.model_url)
+            data = self._client.fetch_confidence(self.model_url)
             self._cache["plddt"] = Plddt.from_dict(data)
         return self._cache["plddt"]

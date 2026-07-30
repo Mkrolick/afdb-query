@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 
 from .batch import search_many as _search_many
-from .errors import InvalidSequenceError
+from .errors import AFDBHTTPError, InvalidSequenceError
 from .models import Structure, confidence_url
 from .sequences import filter_reason
 
@@ -18,6 +18,9 @@ class AlphaFold:
 
     Wraps a shared, thread-safe ``httpx.Client``. Use as a context manager, or
     call :meth:`close` when done.
+
+    Every request failure is raised as :class:`AFDBHTTPError`; ``httpx`` does not
+    appear in this class's contract.
     """
 
     def __init__(
@@ -34,45 +37,59 @@ class AlphaFold:
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "AlphaFold":
+    def __enter__(self) -> AlphaFold:
         return self
 
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    # -- low-level fetch ---------------------------------------------------
+    # -- fetch -------------------------------------------------------------
+    # Public rather than underscore-private: `batch.search_many` drives the client
+    # through exactly these two calls, and a cross-module caller reaching into
+    # private methods is not a boundary -- it is the absence of one.
     def _get(self, url: str, params: dict | None = None) -> httpx.Response:
         return self._client.get(url, params=params, headers={"Accept": "application/json"})
 
-    def _fetch_summary(self, sequence: str, rows: int = 10) -> dict | None:
+    def fetch_summary(self, sequence: str, rows: int = 10) -> dict | None:
         """Tier 1: query the sequence-summary endpoint.
 
         Returns the parsed ``{"entry": ..., "structures": [...]}`` document, or
-        ``None`` when AFDB has no entry (HTTP 404 — a clean "not found"). Raises
-        on any other HTTP error.
+        ``None`` when AFDB has no entry (HTTP 404 -- a clean "not found").
+
+        Raises :class:`AFDBHTTPError` on any other HTTP or transport failure, and
+        ``ValueError`` when ``rows <= 1`` (which AFDB rejects).
         """
         if rows < 2:
             raise ValueError("rows must be > 1 (AFDB rejects rows <= 1)")
-        resp = self._get(
-            SUMMARY_PATH, params={"id": sequence, "type": "sequence", "rows": rows}
-        )
-        if resp.status_code == 404:
-            return None
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = self._get(
+                SUMMARY_PATH, params={"id": sequence, "type": "sequence", "rows": rows}
+            )
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as exc:
+            raise AFDBHTTPError(f"summary fetch failed: {exc}") from exc
 
-    def _fetch_confidence(self, model_url: str) -> dict:
-        """Tier 2: fetch the per-residue confidence JSON for a model URL."""
-        resp = self._get(confidence_url(model_url))
-        resp.raise_for_status()
-        return resp.json()
+    def fetch_confidence(self, model_url: str) -> dict:
+        """Tier 2: fetch the per-residue confidence JSON for a model URL.
+
+        Raises :class:`AFDBHTTPError` on any HTTP or transport failure.
+        """
+        try:
+            resp = self._get(confidence_url(model_url))
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as exc:
+            raise AFDBHTTPError(f"confidence fetch failed: {exc}") from exc
 
     # -- public API --------------------------------------------------------
     def search(self, sequence: str, rows: int = 10) -> list[Structure]:
         """Tier 1: find AFDB structures matching ``sequence``, in AFDB's returned order.
 
         Results are ranked by sequence identity, but ``hits[0]`` is not guaranteed to
-        be the canonical ``AF-<accession>-F1`` model — for some sequences a multi-chain
+        be the canonical ``AF-<accession>-F1`` model -- for some sequences a multi-chain
         or AB-INITIO model ranks first, and several may be equally valid. Use
         ``afdb_query.select_group`` to get every acceptable candidate rather than
         letting one be picked for you.
@@ -83,7 +100,7 @@ class AlphaFold:
         reason = filter_reason(sequence)
         if reason is not None:
             raise InvalidSequenceError(reason)
-        data = self._fetch_summary(sequence, rows)
+        data = self.fetch_summary(sequence, rows)
         if data is None:
             return []
         return [Structure(item["summary"], self) for item in data.get("structures", [])]

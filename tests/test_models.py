@@ -1,5 +1,11 @@
+import httpx
+import respx
+
+from afdb_query.client import AlphaFold
 from afdb_query.errors import AFDBError, InvalidSequenceError
-from afdb_query.models import confidence_url
+from afdb_query.models import Plddt, Structure, confidence_url
+
+# -- errors ----------------------------------------------------------------
 
 
 def test_invalid_sequence_error_is_afdb_error():
@@ -7,6 +13,9 @@ def test_invalid_sequence_error_is_afdb_error():
     assert isinstance(err, AFDBError)
     assert err.reason == "too_short"
     assert "too_short" in str(err)
+
+
+# -- confidence_url --------------------------------------------------------
 
 
 def test_confidence_url_v1():
@@ -30,10 +39,16 @@ def test_confidence_url_bcif():
     )
 
 
-from afdb_query.models import Plddt
+def test_confidence_url_unrecognised_suffix_is_unchanged():
+    assert confidence_url("https://x/files/AF-1-model_v4.pdb") == (
+        "https://x/files/AF-1-confidence_v4.pdb"
+    )
 
 
-def test_from_dict():
+# -- Plddt -----------------------------------------------------------------
+
+
+def test_plddt_from_dict():
     p = Plddt.from_dict(
         {"confidenceScore": [5.0, 6.0], "residueNumber": [1, 2], "confidenceCategory": ["D", "D"]}
     )
@@ -42,11 +57,7 @@ def test_from_dict():
     assert p.raw["confidenceCategory"] == ["D", "D"]
 
 
-import httpx
-import respx
-
-from afdb_query.client import AlphaFold
-from afdb_query.models import Structure
+# -- Structure -------------------------------------------------------------
 
 SUMMARY = {
     "model_identifier": "AF-X",
@@ -86,10 +97,9 @@ def test_structure_oligomeric_state_and_monomer():
     assert not dimer.is_monomer
 
 
-def test_structure_no_entities_returns_none():
-    s = Structure({}, None)
+def test_structure_uniprot_missing_returns_none():
+    s = Structure({"entities": [{"identifier": "x", "identifier_category": "PDB"}]}, None)
     assert s.uniprot_accession is None
-    assert s.description is None
 
 
 def test_structure_description_missing_returns_none():
@@ -97,9 +107,13 @@ def test_structure_description_missing_returns_none():
     assert s.description is None
 
 
-def test_structure_uniprot_missing_returns_none():
-    s = Structure({"entities": [{"identifier": "x", "identifier_category": "PDB"}]}, None)
+def test_structure_no_entities_returns_none():
+    s = Structure({}, None)
     assert s.uniprot_accession is None
+    assert s.description is None
+    assert s.model_identifier is None
+    assert s.model_url is None
+    assert s.global_plddt is None
 
 
 @respx.mock
