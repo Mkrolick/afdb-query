@@ -50,8 +50,8 @@ complexes, then canonical `-F1` over numeric ids — and returns **everything st
 from afdb_query import AlphaFold, select_group, mean_global_plddt, is_monomer
 
 with AlphaFold() as af:
-    doc = af.fetch_summary(sequence)
-    group = select_group(doc["structures"])    # list of summaries, possibly empty
+    doc = af.fetch_summary(sequence)           # None when AFDB has no entry
+    group = select_group(doc["structures"]) if doc else []
 
     if not all(is_monomer(s) for s in group):
         ...                                   # your call: skip, or use it knowingly
