@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .selection import is_monomer as _is_monomer
+
 
 def confidence_url(model_url: str) -> str:
     """Derive the per-residue confidence-JSON URL from a model (CIF) URL.
@@ -33,19 +35,12 @@ class Plddt:
     raw: dict = field(repr=False)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Plddt":
+    def from_dict(cls, data: dict) -> Plddt:
         return cls(
             scores=data["confidenceScore"],
             residue_numbers=data["residueNumber"],
             raw=data,
         )
-
-    def first(self, n: int) -> list[float]:
-        """First ``n`` per-residue pLDDT values, or all of them if fewer than ``n``.
-
-        Never pads and never raises on short structures: returns ``scores[:n]``.
-        """
-        return self.scores[:n]
 
 
 @dataclass(frozen=True)
@@ -57,7 +52,7 @@ class Structure:
     """
 
     raw: dict
-    _client: "AlphaFold" = field(repr=False, compare=False)  # noqa: F821
+    _client: AlphaFold = field(repr=False, compare=False)  # noqa: F821
     _cache: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
@@ -70,7 +65,23 @@ class Structure:
 
     @property
     def global_plddt(self) -> float | None:
+        """AFDB's ``confidence_avg_local_score``: mean pLDDT over the WHOLE deposited model.
+
+        For a complex that average spans every chain, not only the one matching the
+        query, so it is not comparable with a monomer's. Check :attr:`oligomeric_state`
+        (or ``afdb_query.is_monomer``) before comparing this across structures.
+        """
         return self.raw.get("confidence_avg_local_score")
+
+    @property
+    def oligomeric_state(self) -> str | None:
+        """``"MONOMER"``, ``"HOMODIMER"``, ``"HETERODIMER"``, ... or None if unset."""
+        return self.raw.get("oligomeric_state")
+
+    @property
+    def is_monomer(self) -> bool:
+        """Whether this is a single-chain model of one entity. See ``selection.is_monomer``."""
+        return _is_monomer(self.raw)
 
     @property
     def sequence_identity(self) -> float | None:
@@ -97,6 +108,6 @@ class Structure:
     def plddt(self) -> Plddt:
         """Tier 2: per-residue pLDDT for this structure (fetched once, then cached)."""
         if "plddt" not in self._cache:
-            data = self._client._fetch_confidence(self.model_url)
+            data = self._client.fetch_confidence(self.model_url)
             self._cache["plddt"] = Plddt.from_dict(data)
         return self._cache["plddt"]

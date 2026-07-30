@@ -1,9 +1,7 @@
-import json
-
 import httpx
 import pytest
 
-from afdb_query import AlphaFold, confidence_url
+from afdb_query import AlphaFold, confidence_url, is_monomer, select
 
 BASE_URL = "https://alphafold.ebi.ac.uk"
 SUMMARY_URL = f"{BASE_URL}/api/sequence/summary"
@@ -27,14 +25,13 @@ def test_live_search_returns_hits():
 
 
 @pytest.mark.integration
-def test_live_plddt_first_n():
+def test_live_per_residue_plddt():
     with AlphaFold() as af:
         hits = af.search(GOT2)
         plddt = hits[0].plddt()
     assert len(plddt.scores) > 0
-    first5 = plddt.first(5)
-    assert len(first5) == min(5, len(plddt.scores))
-    assert all(isinstance(x, float) for x in first5)
+    assert len(plddt.scores) == len(plddt.residue_numbers)
+    assert all(isinstance(x, float) for x in plddt.scores)
 
 
 @pytest.mark.integration
@@ -54,20 +51,41 @@ def test_live_unknown_sequence_returns_empty():
 
 
 @pytest.mark.integration
-def test_live_full_length_avoids_multichain_trap(tmp_path):
-    # For P12345, AFDB ranks an 860-residue multi-chain model first; full_length
-    # must instead cache the 430-residue canonical AF-P12345-F1.
+def test_live_select_avoids_multichain_trap():
+    # For P12345, AFDB ranks an 860-residue multi-chain model first. `select` must
+    # return the 430-residue canonical monomer instead -- and its per-residue array
+    # must be the query's length, which is the property the global average depends on.
+    resp = httpx.get(
+        SUMMARY_URL,
+        params={"id": GOT2, "type": "sequence", "rows": 10},
+        headers={"Accept": "application/json"},
+        timeout=30,
+    )
+    structures = resp.json()["structures"]
+    chosen = select(structures)
+    assert is_monomer(chosen), "selection must not return a complex"
+
     with AlphaFold() as af:
-        report = af.search_many(
-            [{"id": "got2", "sequence": GOT2, "accession": "P12345"}],
-            tmp_path,
-            plddt_first_n=9999999,
-            full_length=True,
-        )
-    assert report["hits"] == 1
-    assert report["no_full_length"] == 0
-    cached = json.loads((tmp_path / "plddt" / "got2.json").read_text())
-    assert len(cached) == len(GOT2)  # exact-length canonical model, not the 2x trap
+        scores = af.fetch_confidence(chosen["model_url"])["confidenceScore"]
+    assert len(scores) == len(GOT2)
+
+
+@pytest.mark.integration
+def test_live_selection_ignores_pldd_ranking():
+    """Selection must not depend on the confidence scores AFDB reports."""
+    resp = httpx.get(
+        SUMMARY_URL,
+        params={"id": GOT2, "type": "sequence", "rows": 10},
+        headers={"Accept": "application/json"},
+        timeout=30,
+    )
+    structures = resp.json()["structures"]
+    baseline = select(structures)["model_identifier"]
+    # Perturbing every score must not move the choice.
+    bumped = [
+        {"summary": {**s["summary"], "confidence_avg_local_score": 99.99}} for s in structures
+    ]
+    assert select(bumped)["model_identifier"] == baseline
 
 
 @pytest.mark.integration
@@ -150,15 +168,15 @@ def test_raw_confidence_json_matches_cif_bfactor():
     )
     model_url = summary["model_url"]
 
-    json_scores = httpx.get(
-        confidence_url(model_url), timeout=60, follow_redirects=True
-    ).json()["confidenceScore"]
+    json_scores = httpx.get(confidence_url(model_url), timeout=60, follow_redirects=True).json()[
+        "confidenceScore"
+    ]
 
     cif_text = httpx.get(model_url, timeout=60, follow_redirects=True).text
     cif_bfactors = _cif_ca_bfactors(cif_text)
 
     assert len(json_scores) == len(cif_bfactors) > 0
-    assert all(abs(a - b) <= 0.01 for a, b in zip(json_scores, cif_bfactors))
+    assert all(abs(a - b) <= 0.01 for a, b in zip(json_scores, cif_bfactors, strict=True))
 
 
 def _cif_ca_bfactors(text):
