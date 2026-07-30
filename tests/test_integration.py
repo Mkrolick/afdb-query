@@ -74,7 +74,7 @@ def test_live_select_avoids_multichain_trap():
 
 
 @pytest.mark.integration
-def test_live_selection_ignores_pldd_ranking():
+def test_live_selection_ignores_plddt_ranking():
     """Selection must not depend on the confidence scores AFDB reports."""
     resp = httpx.get(
         SUMMARY_URL,

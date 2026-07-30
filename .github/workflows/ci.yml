@@ -5,15 +5,34 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: this workflow only reads the repository. It never pushes, comments,
+# publishes, or touches releases, so no write scope is warranted.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      # Report both ends rather than cancelling on the first failure -- when only the
+      # oldest version breaks, that IS the result worth seeing.
+      fail-fast: false
+      matrix:
+        # The two ends of the declared `requires-python = ">=3.10"`. Testing only the
+        # newest would let an incompatibility with the oldest supported version ship
+        # under a claim of support CI never checked.
+        python-version: ["3.10", "3.13"]
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The job needs the tree, not an authenticated git remote. A persisted
+          # credential would outlive the checkout step for no reason.
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install
         run: |
