@@ -1,9 +1,7 @@
-import json
-
 import httpx
 import pytest
 
-from afdb_query import AlphaFold, confidence_url
+from afdb_query import AlphaFold, confidence_url, is_monomer, mean_global_plddt, select_group
 
 BASE_URL = "https://alphafold.ebi.ac.uk"
 SUMMARY_URL = f"{BASE_URL}/api/sequence/summary"
@@ -27,14 +25,13 @@ def test_live_search_returns_hits():
 
 
 @pytest.mark.integration
-def test_live_plddt_first_n():
+def test_live_per_residue_plddt():
     with AlphaFold() as af:
         hits = af.search(GOT2)
         plddt = hits[0].plddt()
     assert len(plddt.scores) > 0
-    first5 = plddt.first(5)
-    assert len(first5) == min(5, len(plddt.scores))
-    assert all(isinstance(x, float) for x in first5)
+    assert len(plddt.scores) == len(plddt.residue_numbers)
+    assert all(isinstance(x, float) for x in plddt.scores)
 
 
 @pytest.mark.integration
@@ -54,20 +51,61 @@ def test_live_unknown_sequence_returns_empty():
 
 
 @pytest.mark.integration
-def test_live_full_length_avoids_multichain_trap(tmp_path):
-    # For P12345, AFDB ranks an 860-residue multi-chain model first; full_length
-    # must instead cache the 430-residue canonical AF-P12345-F1.
+def test_live_select_avoids_multichain_trap():
+    # For P12345, AFDB ranks an 860-residue multi-chain model first. `select` must
+    # return the 430-residue canonical monomer instead -- and its per-residue array
+    # must be the query's length, which is the property the global average depends on.
+    resp = httpx.get(
+        SUMMARY_URL,
+        params={"id": GOT2, "type": "sequence", "rows": 10},
+        headers={"Accept": "application/json"},
+        timeout=30,
+    )
+    group = select_group(resp.json()["structures"])
+    assert group, "expected at least one candidate"
+    assert all(is_monomer(s) for s in group), "selection must not return a complex"
+
+    # every member must be a full-length model of the query, or averaging across the
+    # group would mix different residue counts
     with AlphaFold() as af:
-        report = af.search_many(
-            [{"id": "got2", "sequence": GOT2, "accession": "P12345"}],
-            tmp_path,
-            plddt_first_n=9999999,
-            full_length=True,
-        )
-    assert report["hits"] == 1
-    assert report["no_full_length"] == 0
-    cached = json.loads((tmp_path / "plddt" / "got2.json").read_text())
-    assert len(cached) == len(GOT2)  # exact-length canonical model, not the 2x trap
+        for s in group:
+            scores = af._fetch_confidence(s["model_url"])["confidenceScore"]
+            assert len(scores) == len(GOT2), s["model_identifier"]
+
+
+@pytest.mark.integration
+def test_live_selection_ignores_plddt_ranking():
+    """Selection must not depend on the confidence scores AFDB reports."""
+    resp = httpx.get(
+        SUMMARY_URL,
+        params={"id": GOT2, "type": "sequence", "rows": 10},
+        headers={"Accept": "application/json"},
+        timeout=30,
+    )
+    structures = resp.json()["structures"]
+    baseline = [s["model_identifier"] for s in select_group(structures)]
+    bumped = [
+        {"summary": {**x["summary"], "confidence_avg_local_score": 99.99}} for x in structures
+    ]
+    assert [s["model_identifier"] for s in select_group(bumped)] == baseline
+
+
+@pytest.mark.integration
+def test_live_group_mean_is_not_the_max():
+    """The group average must not coincide with the old max-over-candidates value."""
+    resp = httpx.get(
+        SUMMARY_URL,
+        params={"id": GOT2, "type": "sequence", "rows": 10},
+        headers={"Accept": "application/json"},
+        timeout=30,
+    )
+    group = select_group(resp.json()["structures"])
+    scores = [s["confidence_avg_local_score"] for s in group]
+    mean = mean_global_plddt(group)
+    assert mean is not None
+    assert min(scores) <= mean <= max(scores)
+    if len(set(scores)) > 1:
+        assert mean < max(scores)
 
 
 @pytest.mark.integration
