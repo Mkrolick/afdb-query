@@ -139,4 +139,7 @@ def mean_per_residue(arrays, expected_length: int | None = None) -> list[float]:
     if length == 0:
         raise ValueError("per-residue arrays are empty")
     n = len(arrays)
-    return [sum(a[i] for a in arrays) / n for i in range(length)]
+    # strict=True is redundant after the raggedness check above, and kept anyway: it
+    # re-states the invariant where the columns are actually built, so a future edit
+    # that loosens the check fails here rather than silently truncating.
+    return [sum(column) / n for column in zip(*arrays, strict=True)]
