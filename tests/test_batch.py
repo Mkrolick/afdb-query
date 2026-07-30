@@ -3,6 +3,7 @@ import json
 import httpx
 import respx
 
+from afdb_query.batch import fetch_plddt_many, load_plddt, plddt_path
 from afdb_query.client import AlphaFold
 
 SUMMARY_URL = "https://alphafold.ebi.ac.uk/api/sequence/summary"
@@ -127,3 +128,89 @@ def test_search_many_empty_input_makes_no_directory(tmp_path):
     assert report["total"] == 0
     assert report["queried"]["total"] == 0
     assert not (tmp_path / "summaries").exists()
+
+
+# -- per-residue pass ------------------------------------------------------
+
+CONF_URL = "https://alphafold.ebi.ac.uk/files/AF-X-confidence_v1.json"
+MODEL_URL = "https://alphafold.ebi.ac.uk/files/AF-X-model_v1.cif"
+CONF_DOC = {"residueNumber": [1, 2, 3], "confidenceScore": [10.0, 20.0, 30.0]}
+
+
+@respx.mock
+def test_fetch_plddt_many_caches_full_array(tmp_path):
+    respx.get(CONF_URL).mock(return_value=httpx.Response(200, json=CONF_DOC))
+    with AlphaFold() as af:
+        report = fetch_plddt_many(af, [{"id": "rec", "model_url": MODEL_URL}], tmp_path)
+    assert report == {"total": 1, "skipped": 0, "queried": {"hits": 1, "errors": 0, "total": 1}}
+    got = load_plddt(tmp_path, "rec")
+    assert got.scores == [10.0, 20.0, 30.0]  # whole array, never a prefix
+    assert got.residue_numbers == [1, 2, 3]
+    assert got.raw["model_url"] == MODEL_URL  # provenance kept
+
+
+@respx.mock
+def test_fetch_plddt_many_accepts_tuples(tmp_path):
+    respx.get(CONF_URL).mock(return_value=httpx.Response(200, json=CONF_DOC))
+    with AlphaFold() as af:
+        report = fetch_plddt_many(af, [("rec", MODEL_URL)], tmp_path)
+    assert report["queried"]["hits"] == 1
+
+
+@respx.mock
+def test_fetch_plddt_many_resumes_on_its_own_artifact(tmp_path):
+    """Resumability keys on the plddt file, NOT the summary -- so a summary-only
+    run followed by a per-residue run back-fills instead of skipping."""
+    (tmp_path / "summaries").mkdir(parents=True)
+    (tmp_path / "summaries" / "rec.json").write_text(json.dumps({"structures": []}))
+    route = respx.get(CONF_URL).mock(return_value=httpx.Response(200, json=CONF_DOC))
+    with AlphaFold() as af:
+        report = fetch_plddt_many(af, [("rec", MODEL_URL)], tmp_path)
+    assert report["skipped"] == 0  # the cached SUMMARY does not block it
+    assert report["queried"]["hits"] == 1
+    assert route.call_count == 1
+
+
+@respx.mock(assert_all_called=False)
+def test_fetch_plddt_many_skips_already_fetched(tmp_path):
+    (tmp_path / "plddt").mkdir(parents=True)
+    (tmp_path / "plddt" / "rec.json").write_text(json.dumps(CONF_DOC))
+    route = respx.get(CONF_URL).mock(return_value=httpx.Response(200, json=CONF_DOC))
+    with AlphaFold() as af:
+        report = fetch_plddt_many(af, [("rec", MODEL_URL)], tmp_path)
+    assert report["skipped"] == 1
+    assert route.call_count == 0
+
+
+@respx.mock
+def test_fetch_plddt_many_error_is_counted_not_written(tmp_path):
+    respx.get(CONF_URL).mock(return_value=httpx.Response(500))
+    with AlphaFold() as af:
+        report = fetch_plddt_many(af, [("rec", MODEL_URL)], tmp_path)
+    assert report["queried"]["errors"] == 1
+    assert load_plddt(tmp_path, "rec") is None  # retried next run
+
+
+@respx.mock
+def test_fetch_plddt_many_missing_fields_become_empty(tmp_path):
+    respx.get(CONF_URL).mock(return_value=httpx.Response(200, json={}))
+    with AlphaFold() as af:
+        fetch_plddt_many(af, [("rec", MODEL_URL)], tmp_path)
+    got = load_plddt(tmp_path, "rec")
+    assert got.scores == [] and got.residue_numbers == []
+    assert got.mean() is None
+
+
+def test_fetch_plddt_many_empty_input_makes_no_directory(tmp_path):
+    with AlphaFold() as af:
+        report = fetch_plddt_many(af, [], tmp_path)
+    assert report["total"] == 0
+    assert not (tmp_path / "plddt").exists()
+
+
+def test_load_plddt_absent_is_none(tmp_path):
+    assert load_plddt(tmp_path, "nope") is None
+
+
+def test_plddt_path_shape(tmp_path):
+    assert plddt_path(tmp_path, "rec") == tmp_path / "plddt" / "rec.json"

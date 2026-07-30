@@ -48,6 +48,20 @@ def test_confidence_url_unrecognised_suffix_is_unchanged():
 # -- Plddt -----------------------------------------------------------------
 
 
+def test_plddt_mean_delegates_to_one_definition():
+    p = Plddt.from_dict({"confidenceScore": [10.0, 20.0, 30.0], "residueNumber": [1, 2, 3]})
+    assert p.mean() == 20.0
+    assert p.mean(start=1) == 25.0
+    assert p.mean(stop=1) == 10.0
+    assert p.mean(start=99) is None
+
+
+def test_plddt_is_contiguous():
+    assert Plddt.from_dict({"confidenceScore": [1.0, 2.0], "residueNumber": [1, 2]}).is_contiguous
+    gapped = Plddt.from_dict({"confidenceScore": [1.0, 2.0], "residueNumber": [1, 7]})
+    assert not gapped.is_contiguous
+
+
 def test_plddt_from_dict():
     p = Plddt.from_dict(
         {"confidenceScore": [5.0, 6.0], "residueNumber": [1, 2], "confidenceCategory": ["D", "D"]}

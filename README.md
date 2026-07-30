@@ -141,7 +141,78 @@ report = af.search_many(
 not fetch per-residue confidence: which of several exact-sequence matches answers
 your question is a property of your analysis, not of AFDB, and making that choice
 inside a batch runner would hide it. Run `select_group` over the cached summaries and
-average across what it returns.
+pass its members to `fetch_plddt_many` when you need per-residue data.
+
+## Per-residue pLDDT in bulk
+
+`fetch_plddt_many` caches the **full** per-residue array for each structure you chose:
+
+```python
+from afdb_query import AlphaFold, select_group, fetch_plddt_many, load_plddt
+import json, pathlib
+
+# summaries were cached earlier by search_many
+records = []
+for f in (pathlib.Path("afdb_cache") / "summaries").glob("*.json"):
+    for s in select_group(json.loads(f.read_text()).get("structures") or []):
+        records.append({"id": f"{f.stem}::{s['model_identifier']}", "model_url": s["model_url"]})
+
+with AlphaFold() as af:
+    fetch_plddt_many(af, records, "afdb_cache")
+
+p = load_plddt("afdb_cache", "rec1")   # Plddt, or None if never fetched
+p.scores                                # full list[float]
+p.mean()                                # one definition of "mean pLDDT"
+p.mean(start=42)                        # ...and of a region of it
+```
+
+Resumability keys on `afdb_cache/plddt/{id}.json`, **not** on the summary — so running
+summaries first and residues later back-fills every already-cached record instead of
+skipping it.
+
+## Mean pLDDT, and why it takes bounds
+
+`mean_plddt(scores, start=None, stop=None)` is the single definition. AFDB reports a
+pre-computed `confidence_avg_local_score`; other predictors give you only the array. A
+codebase that reads the field in one place and averages in another has two definitions
+of its headline number and no way to tell them apart.
+
+Nothing rounds — AFDB's field arrives rounded server-side, so `mean_plddt` over the same
+array can differ in the last digit. Round when you format.
+
+**Bounds exist because global means are not comparable between a protein and a
+sub-range of itself.** Drop a disordered N-terminal tail and the mean rises purely
+because low scorers left the set. `shared_suffix_means(long, short)` does the
+length-controlled version:
+
+```python
+from afdb_query import shared_suffix_means
+
+shared_suffix_means(canonical.scores, truncated.scores)
+# {"offset": 71,
+#  "shared_long": ...,   # mean over the residues both have — same count each side
+#  "shared_short": ...,
+#  "displaced": ...}     # mean over the residues only the longer one has
+```
+
+`residue_index` and `is_contiguous` are there because per-residue arrays are parallel to
+`residueNumber`, and treating array position as residue number is an assumption, not a
+guarantee.
+
+### Averaging a group's arrays
+
+`mean_per_residue(arrays, expected_length=None)` builds the consensus array for a group
+`select_group` returned. It **raises on ragged input** rather than `zip`-truncating:
+unequal lengths make the index set non-rectangular, so position `i` stops denoting the
+same residue in every member and every downstream region mean silently describes a
+comparison that does not exist.
+
+Pass `expected_length=len(sequence)` to additionally require the arrays be the query's
+size, and use `filter_by_length` to drop non-conforming members first.
+
+The commutation this rests on — `mean over region of (elementwise mean)` equals
+`mean over group of (region mean)` — holds because both are unweighted means over the
+same rectangular index set, and is asserted in the test suite.
 
 ## Not (yet) supported
 
