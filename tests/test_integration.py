@@ -1,7 +1,15 @@
 import httpx
 import pytest
 
-from afdb_query import AlphaFold, confidence_url, is_monomer, mean_global_plddt, select_group
+from afdb_query import (
+    AlphaFold,
+    confidence_url,
+    is_monomer,
+    mean_global_plddt,
+    mean_per_residue,
+    mean_plddt,
+    select_group,
+)
 
 BASE_URL = "https://alphafold.ebi.ac.uk"
 SUMMARY_URL = f"{BASE_URL}/api/sequence/summary"
@@ -229,3 +237,36 @@ def _cif_ca_bfactors(text):
         else:
             i += 1
     return []
+
+
+@pytest.mark.integration
+def test_live_reported_mean_matches_mean_over_the_array():
+    """AFDB's `confidence_avg_local_score` vs `mean_plddt` over the same structure's array.
+
+    This is the oracle for treating the two as one quantity. A codebase that reads the
+    summary field for AFDB hits and averages an array for locally-folded proteins is
+    comparing them directly; if they disagree by more than rounding, that comparison is
+    between two different statistics and the difference belongs in the caveats.
+    """
+    with AlphaFold() as af:
+        doc = af.fetch_summary(GOT2)
+        group = select_group(doc["structures"])
+        reported = mean_global_plddt(group)
+        arrays = [af.fetch_confidence(s["model_url"])["confidenceScore"] for s in group]
+
+    # refuses ragged input, so reaching mean_plddt at all proves the group is uniform
+    computed = mean_plddt(mean_per_residue(arrays, expected_length=len(GOT2)))
+    assert computed is not None
+    # AFDB rounds server-side; anything beyond that is a real difference in definition.
+    assert abs(computed - reported) < 0.05, (
+        f"AFDB reports {reported}, mean over its own array is {computed}"
+    )
+
+
+@pytest.mark.integration
+def test_live_residue_numbering_is_contiguous():
+    """Positions may be treated as residues only while this holds -- so check it live."""
+    with AlphaFold() as af:
+        hits = af.search(GOT2)
+        p = hits[0].plddt()
+    assert p.is_contiguous

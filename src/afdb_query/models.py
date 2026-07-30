@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .plddt import is_contiguous as _is_contiguous
+from .plddt import mean_plddt as _mean_plddt
 from .selection import is_monomer as _is_monomer
 
 
@@ -41,6 +43,21 @@ class Plddt:
             residue_numbers=data["residueNumber"],
             raw=data,
         )
+
+    def mean(self, start: int | None = None, stop: int | None = None) -> float | None:
+        """Mean pLDDT over ``scores[start:stop]``; ``None`` when that slice is empty.
+
+        Delegates to :func:`afdb_query.plddt.mean_plddt` rather than re-implementing the
+        average, so this and every other mean in a codebase are the same computation.
+        Note it may differ in the last digit from :attr:`Structure.global_plddt`, which
+        AFDB rounds server-side.
+        """
+        return _mean_plddt(self.scores, start, stop)
+
+    @property
+    def is_contiguous(self) -> bool:
+        """Whether ``residue_numbers`` is exactly ``1..N``, so positions are residues."""
+        return _is_contiguous(self.residue_numbers)
 
 
 @dataclass(frozen=True)
