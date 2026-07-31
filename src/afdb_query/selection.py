@@ -42,6 +42,53 @@ CANONICAL_F1 = re.compile(r"^AF-[A-Za-z]\w*-F\d+$")
 
 MONOMER = "MONOMER"
 
+# AFDB's sequence endpoint is an exact-sequence lookup: it returns structures whose sequence
+# IS the query, reporting sequence_identity 1.0 and coverage 1.0 for every one, and 404s
+# rather than offering a near neighbour. Verified two ways -- across 60,436 cached summaries
+# from a real run, all 39,677 matched structures reported exactly these values; and against
+# the live API across proteins of length 110-1273.
+#
+# Requiring them anyway, because that is a fact about a third-party API and not a guarantee
+# this package can make. Every number downstream assumes the structure attached to a row IS
+# that row's protein, and sequence_identity is the only field that ever asserts it. If AFDB
+# ever adds fuzzy matching -- a new parameter default, a schema change -- an unchecked
+# pipeline would attach a different protein's confidence to every affected row and look
+# entirely normal doing it.
+EXACT_IDENTITY = 1.0
+EXACT_COVERAGE = 1.0
+
+
+def is_exact(summary: dict) -> bool:
+    """Whether this structure IS the queried sequence rather than a near neighbour.
+
+    Requires ``sequence_identity == 1.0`` **and** ``coverage == 1.0``: identity alone says the
+    aligned part matched, coverage says the alignment spanned the whole query. Both are needed
+    for "this structure is my protein".
+
+    A missing or non-numeric field is NOT exact. Unverifiable and verified are different
+    states, and only one of them is safe to attach a pLDDT to.
+
+    Note this still does not mean the model is the query's SIZE -- coverage is about the query
+    being covered, not about the model carrying nothing else. See :func:`filter_by_length`.
+    """
+    return (
+        summary.get("sequence_identity") == EXACT_IDENTITY
+        and summary.get("coverage") == EXACT_COVERAGE
+    )
+
+
+def exact_matches(structures):
+    """Split the endpoint's ``structures`` list into ``(exact, rejected)`` summaries.
+
+    Exposed rather than kept internal so a caller can see what :func:`select_group` discarded.
+    Today that list is always empty; if it ever is not, AFDB's search contract has changed and
+    that is worth knowing loudly rather than inferring from a drop in coverage.
+    """
+    summaries = [item["summary"] for item in structures if item.get("summary")]
+    exact = [s for s in summaries if is_exact(s)]
+    rejected = [s for s in summaries if not is_exact(s)]
+    return exact, rejected
+
 
 def is_monomer(summary: dict) -> bool:
     """Whether this structure is a single-chain model of one entity.
@@ -92,11 +139,16 @@ def select_group(structures, accession: str | None = None) -> list[dict]:
     Pass the whole group to :func:`mean_global_plddt`, or fetch each member's
     per-residue array and average those elementwise.
 
-    This never filters. "No usable structure" and "a group whose average spans a
+    **Non-exact matches are discarded before the tiers run** -- see :func:`is_exact`. That is
+    the one thing this filters, and it filters rather than raises because a row with no exact
+    match should end up with no pLDDT, which every consumer already handles, rather than
+    halting a 60k-row batch on one anomaly. Use :func:`exact_matches` to see what was dropped.
+
+    Nothing else is filtered. "No usable structure" and "a group whose average spans a
     complex" warrant different handling and only the caller knows which its analysis
     tolerates, so test :func:`is_monomer` on the members and decide.
     """
-    summaries = [item["summary"] for item in structures if item.get("summary")]
+    summaries, _rejected = exact_matches(structures)
     if not summaries:
         return []
     best = min(rank_tiers(s, accession) for s in summaries)

@@ -37,6 +37,14 @@ need to import `httpx`.
 
 A sequence query can match several structures, and **they are not interchangeable**:
 
+- Only **exact** matches are usable. `select_group` discards anything that is not
+  `sequence_identity == 1.0` **and** `coverage == 1.0`, because every number downstream
+  assumes the structure attached to a record IS that record's protein, and those fields are
+  the only thing that asserts it. AFDB's endpoint returns nothing else today — verified
+  across 39,677 matched structures — but that is a fact about a third-party API, not a
+  guarantee this package can make. `exact_matches` returns `(exact, rejected)` if you want
+  to see what was dropped.
+
 - `hits[0]` is *not* guaranteed to be the canonical `AF-<accession>-F1` model. For
   some sequences a multi-chain or numeric AB-INITIO model ranks first.
 - `global_plddt` (`confidence_avg_local_score`) is averaged over the **whole

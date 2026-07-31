@@ -12,8 +12,10 @@ from .plddt import (
     shared_suffix_means,
 )
 from .selection import (
+    exact_matches,
     filter_by_length,
     is_canonical_model,
+    is_exact,
     is_monomer,
     mean_global_plddt,
     select_group,
@@ -29,6 +31,8 @@ __all__ = [
     "select_group",
     "mean_global_plddt",
     "filter_by_length",
+    "is_exact",
+    "exact_matches",
     "is_monomer",
     "is_canonical_model",
     "mean_plddt",
